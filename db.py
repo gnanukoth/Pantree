@@ -12,6 +12,7 @@ import os
 load_dotenv()
 
 _client: Optional[MongoClient] = None
+_indexes_ready = False
 
 DEFAULT_DB_NAME = os.getenv("MONGODB_DB", "pantree")
 
@@ -29,7 +30,28 @@ def get_client() -> MongoClient:
 
 def get_db(name: Optional[str] = None) -> Database:
     """Return the Pantree database (default: pantree, overridable via MONGODB_DB)."""
-    return get_client()[name or DEFAULT_DB_NAME]
+    db = get_client()[name or DEFAULT_DB_NAME]
+    _ensure_indexes(db)
+    return db
+
+
+def _ensure_indexes(db: Database) -> None:
+    """Allow expired/used history plus at most one active row per item+unit."""
+    global _indexes_ready
+    if _indexes_ready:
+        return
+    coll = db["inventory"]
+    try:
+        coll.drop_index("item_1_unit_1")
+    except Exception:
+        pass
+    coll.create_index(
+        [("item", 1), ("unit", 1)],
+        unique=True,
+        partialFilterExpression={"status": "active"},
+        name="item_unit_active_unique",
+    )
+    _indexes_ready = True
 
 
 def _utcnow() -> datetime:
@@ -83,8 +105,10 @@ def insert_inventory_item(
 ) -> dict[str, Any]:
     """Apply a signed inventory delta for item+unit.
 
-    Purchases (delta >= 0) upsert. Usage (delta < 0) only updates an existing
-    row, clamping quantity at 0 and flagging if usage exceeded stock.
+    Purchases (delta >= 0) update an *active* row, or insert a new document
+    if none is active (expired/used rows are left alone). Usage (delta < 0)
+    only updates an existing active row, clamping quantity at 0 and flagging
+    if usage exceeded stock.
 
     ``tags`` is merged into the existing tags array via $addToSet (never overwritten).
 
@@ -94,7 +118,7 @@ def insert_inventory_item(
     amount = _coerce_delta(delta)
     tag_list = _normalize_tags(tags)
     coll = get_db()["inventory"]
-    match = {"item": item_key, "unit": unit_key}
+    match = {"item": item_key, "unit": unit_key, "status": "active"}
 
     if amount < 0:
         existing = coll.find_one(match)
@@ -157,30 +181,37 @@ def insert_inventory_item(
             "note": note,
         }
 
-    set_on_insert: dict[str, Any] = {
-        "expires_at": expires_at,
-        "created_at": _utcnow(),
-        "insufficient_flag": False,
-    }
-    # tags live on $addToSet; only default to [] when this write has none.
-    if not tag_list:
-        set_on_insert["tags"] = []
+    existing_active = coll.find_one(match)
+    if existing_active is None:
+        # Do not revive expired/used rows — insert a fresh active document.
+        new_doc: dict[str, Any] = {
+            "item": item_key,
+            "unit": unit_key,
+            "quantity": amount,
+            "expires_at": expires_at,
+            "status": "active",
+            "created_at": _utcnow(),
+            "insufficient_flag": False,
+            "tags": tag_list,
+        }
+        result = coll.insert_one(new_doc)
+        return {
+            "inventory_id": result.inserted_id,
+            "skipped": False,
+            "insufficient": False,
+            "note": None,
+        }
 
     update: dict[str, Any] = {
         "$inc": {"quantity": amount},
         "$set": {"status": "active"},
-        "$setOnInsert": set_on_insert,
     }
     if tag_list:
         update["$addToSet"] = {"tags": {"$each": tag_list}}
 
-    result = coll.update_one(match, update, upsert=True)
-    inventory_id = result.upserted_id
-    if inventory_id is None:
-        doc = coll.find_one(match)
-        inventory_id = None if doc is None else doc["_id"]
+    coll.update_one({"_id": existing_active["_id"]}, update)
     return {
-        "inventory_id": inventory_id,
+        "inventory_id": existing_active["_id"],
         "skipped": False,
         "insufficient": False,
         "note": None,
