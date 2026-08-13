@@ -14,7 +14,7 @@ load_dotenv()
 
 MODEL = "claude-sonnet-4-5"
 
-SYSTEM_PROMPT = """You extract structured pantry facts from a user's message for a pantry-tracking app.
+EXTRACTION_PROMPT = """You extract structured pantry facts from a user's message for a pantry-tracking app.
 
 Return ONLY valid JSON (no markdown fences, no commentary) with this shape:
 {
@@ -27,12 +27,13 @@ Return ONLY valid JSON (no markdown fences, no commentary) with this shape:
       "unit": "<free string, e.g. count, lb, oz, cup, gallon>",
       "expires_at": "<YYYY-MM-DD>",
       "action": "bought" | "used",
+      "tags": ["<2-4 lowercase tags from the controlled vocabulary>"],
       "note": "<optional; include only when amount is uncertain>"
     }
     // OR preference / dietary statement (not an inventory change):
     {
       "kind": "preference",
-      "preference_type": "<e.g. dietary, dislike, like, allergy, cuisine, habit>",
+      "preference_type": "<e.g. diet, dislike, cuisine, restriction, temporary_constraint>",
       "content": "<what the user prefers or avoids>"
     }
   ]
@@ -49,11 +50,21 @@ Rules:
   default delta to -1, choose a reasonable unit, and set note explaining the uncertainty.
 - If a purchase amount is missing, default delta to 1 with an appropriate unit and optional note.
 - action should match the sign of delta: "bought" for positive, "used" for negative.
+- For every inventory fact (bought or used), include "tags": an array of 2-4 short lowercase
+  tags describing the item's food category and dietary properties. Prefer this controlled
+  vocabulary so preference matching is reliable:
+  vegetable, leafy-green, fruit, grain, protein, dairy, meat, seafood, legume, nut,
+  fibre-rich, high-protein, comfort, spicy, fermented, frozen, canned, fresh, sweet,
+  savory, gluten, herb, oil, beverage.
+  Example: "bought spinach" -> tags like ["vegetable", "fibre-rich", "leafy-green"].
+  Do not invent free-form tags when a vocabulary term fits. Always include tags on inventory facts.
 - For inventory: if the user did not give an expiration date, estimate a reasonable expires_at from today's date based on typical shelf life for that item (e.g. milk ~7 days, bread ~5 days, eggs ~21 days, canned goods ~1 year, fresh produce ~5–14 days).
 - Prefer preference facts when the message is about tastes, diets, allergies, or habits rather than adding/removing pantry stock.
 - If nothing pantry-related can be extracted, return {"facts": []}.
 - Today's date is {today}.
 """
+
+SYSTEM_PROMPT = EXTRACTION_PROMPT
 
 
 def _get_client() -> Anthropic:
@@ -78,13 +89,14 @@ def extract_facts(user_message: str) -> dict[str, Any]:
     Returns a dict like:
       {"facts": [{"kind": "inventory", "item": ..., "delta": <signed number>,
                   "unit": "count"|"lb"|..., "expires_at": "YYYY-MM-DD",
-                  "action": "bought"|"used", "note": <optional>}, ...]}
+                  "action": "bought"|"used", "tags": ["vegetable", ...],
+                  "note": <optional>}, ...]}
     or preference facts with preference_type / content.
     """
     if not user_message or not str(user_message).strip():
         return {"facts": []}
 
-    system = SYSTEM_PROMPT.replace("{today}", date.today().isoformat())
+    system = EXTRACTION_PROMPT.replace("{today}", date.today().isoformat())
     client = _get_client()
     response = client.messages.create(
         model=MODEL,

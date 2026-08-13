@@ -58,6 +58,7 @@ def process_message(user_message: str) -> dict[str, Any]:
             unit=unit,
             delta=delta,
             expires_at=fact.get("expires_at"),
+            tags=fact.get("tags"),
         )
         notes = [n for n in (fact.get("note"), write.get("note")) if n]
         reason = " — ".join(notes) if notes else user_message

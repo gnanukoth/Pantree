@@ -54,16 +54,45 @@ def _coerce_delta(delta: Any) -> float | int:
     return amount
 
 
-def insert_inventory_item(item: str, unit: str, delta: Any, expires_at: Any) -> dict[str, Any]:
+def _normalize_tags(tags: Any) -> list[str]:
+    """Lowercase, trim, and de-dupe a tags list (or a single string)."""
+    if tags is None:
+        return []
+    if isinstance(tags, str):
+        raw = [tags]
+    elif isinstance(tags, (list, tuple, set)):
+        raw = list(tags)
+    else:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for tag in raw:
+        key = str(tag).strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def insert_inventory_item(
+    item: str,
+    unit: str,
+    delta: Any,
+    expires_at: Any,
+    tags: Any = None,
+) -> dict[str, Any]:
     """Apply a signed inventory delta for item+unit.
 
     Purchases (delta >= 0) upsert. Usage (delta < 0) only updates an existing
     row, clamping quantity at 0 and flagging if usage exceeded stock.
 
+    ``tags`` is merged into the existing tags array via $addToSet (never overwritten).
+
     Returns a dict with inventory_id, skipped, insufficient, and optional note.
     """
     item_key, unit_key = _item_unit_keys(item, unit)
     amount = _coerce_delta(delta)
+    tag_list = _normalize_tags(tags)
     coll = get_db()["inventory"]
     match = {"item": item_key, "unit": unit_key}
 
@@ -77,32 +106,43 @@ def insert_inventory_item(item: str, unit: str, delta: Any, expires_at: Any) -> 
                 "note": "item not previously tracked in inventory",
             }
 
-        coll.update_one(
-            match,
-            [
-                {
-                    "$set": {
-                        "insufficient_flag": {
-                            "$lt": [{"$add": ["$quantity", amount]}, 0]
-                        },
-                        "quantity": {
-                            "$max": [0, {"$add": ["$quantity", amount]}]
-                        },
-                    }
-                },
-                {
-                    "$set": {
-                        "status": {
-                            "$cond": {
-                                "if": {"$eq": ["$quantity", 0]},
-                                "then": "used",
-                                "else": "active",
-                            }
+        pipeline: list[dict[str, Any]] = [
+            {
+                "$set": {
+                    "insufficient_flag": {
+                        "$lt": [{"$add": ["$quantity", amount]}, 0]
+                    },
+                    "quantity": {
+                        "$max": [0, {"$add": ["$quantity", amount]}]
+                    },
+                }
+            },
+            {
+                "$set": {
+                    "status": {
+                        "$cond": {
+                            "if": {"$eq": ["$quantity", 0]},
+                            "then": "used",
+                            "else": "active",
                         }
                     }
-                },
-            ],
-        )
+                }
+            },
+        ]
+        if tag_list:
+            pipeline.append(
+                {
+                    "$set": {
+                        "tags": {
+                            "$setUnion": [
+                                {"$ifNull": ["$tags", []]},
+                                tag_list,
+                            ]
+                        }
+                    }
+                }
+            )
+        coll.update_one(match, pipeline)
         doc = coll.find_one(match)
         insufficient = bool(doc and doc.get("insufficient_flag"))
         note = (
@@ -117,19 +157,24 @@ def insert_inventory_item(item: str, unit: str, delta: Any, expires_at: Any) -> 
             "note": note,
         }
 
-    result = coll.update_one(
-        match,
-        {
-            "$inc": {"quantity": amount},
-            "$set": {"status": "active"},
-            "$setOnInsert": {
-                "expires_at": expires_at,
-                "created_at": _utcnow(),
-                "insufficient_flag": False,
-            },
-        },
-        upsert=True,
-    )
+    set_on_insert: dict[str, Any] = {
+        "expires_at": expires_at,
+        "created_at": _utcnow(),
+        "insufficient_flag": False,
+    }
+    # tags live on $addToSet; only default to [] when this write has none.
+    if not tag_list:
+        set_on_insert["tags"] = []
+
+    update: dict[str, Any] = {
+        "$inc": {"quantity": amount},
+        "$set": {"status": "active"},
+        "$setOnInsert": set_on_insert,
+    }
+    if tag_list:
+        update["$addToSet"] = {"tags": {"$each": tag_list}}
+
+    result = coll.update_one(match, update, upsert=True)
     inventory_id = result.upserted_id
     if inventory_id is None:
         doc = coll.find_one(match)
