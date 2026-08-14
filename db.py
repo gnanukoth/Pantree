@@ -52,6 +52,7 @@ def _ensure_indexes(db: Database) -> None:
         name="item_unit_active_unique",
     )
     _indexes_ready = True
+    ensure_description_vector_index(coll)
 
 
 def _utcnow() -> datetime:
@@ -96,12 +97,51 @@ def _normalize_tags(tags: Any) -> list[str]:
     return out
 
 
+VECTOR_INDEX_NAME = "inventory_description_vector"
+VECTOR_EMBED_MODEL = "voyage-4-lite"
+
+
+def ensure_description_vector_index(coll=None) -> None:
+    """Create an Atlas Vector Search index with automated embeddings on description.
+
+    No-ops if the index already exists or the cluster does not support autoEmbed.
+    """
+    try:
+        from pymongo.operations import SearchIndexModel
+    except Exception:
+        return
+    coll = coll if coll is not None else get_db()["inventory"]
+    try:
+        existing = {idx.get("name") for idx in coll.list_search_indexes()}
+        if VECTOR_INDEX_NAME in existing:
+            return
+        coll.create_search_index(
+            SearchIndexModel(
+                definition={
+                    "fields": [
+                        {
+                            "type": "autoEmbed",
+                            "modality": "text",
+                            "path": "description",
+                            "model": VECTOR_EMBED_MODEL,
+                        }
+                    ]
+                },
+                name=VECTOR_INDEX_NAME,
+                type="vectorSearch",
+            )
+        )
+    except Exception:
+        return
+
+
 def insert_inventory_item(
     item: str,
     unit: str,
     delta: Any,
     expires_at: Any,
     tags: Any = None,
+    description: Any = None,
 ) -> dict[str, Any]:
     """Apply a signed inventory delta for item+unit.
 
@@ -127,8 +167,14 @@ def insert_inventory_item(
                 "inventory_id": None,
                 "skipped": True,
                 "insufficient": False,
+                "ran_out": False,
                 "note": "item not previously tracked in inventory",
             }
+
+        prev_qty = float(existing.get("quantity") or 0)
+        new_qty = max(0.0, prev_qty + amount)
+        if float(new_qty).is_integer():
+            new_qty = int(new_qty)
 
         pipeline: list[dict[str, Any]] = [
             {
@@ -167,17 +213,19 @@ def insert_inventory_item(
                 }
             )
         coll.update_one(match, pipeline)
-        doc = coll.find_one(match)
-        insufficient = bool(doc and doc.get("insufficient_flag"))
+        updated = coll.find_one({"_id": existing["_id"]})
+        insufficient = bool(updated and updated.get("insufficient_flag"))
         note = (
             "used more than tracked inventory — data may be stale"
             if insufficient
             else None
         )
+        ran_out = new_qty == 0
         return {
-            "inventory_id": None if doc is None else doc["_id"],
+            "inventory_id": None if updated is None else updated["_id"],
             "skipped": False,
             "insufficient": insufficient,
+            "ran_out": ran_out,
             "note": note,
         }
 
@@ -194,11 +242,14 @@ def insert_inventory_item(
             "insufficient_flag": False,
             "tags": tag_list,
         }
+        if description:
+            new_doc["description"] = str(description).strip()
         result = coll.insert_one(new_doc)
         return {
             "inventory_id": result.inserted_id,
             "skipped": False,
             "insufficient": False,
+            "ran_out": False,
             "note": None,
         }
 
@@ -206,6 +257,8 @@ def insert_inventory_item(
         "$inc": {"quantity": amount},
         "$set": {"status": "active"},
     }
+    if description:
+        update["$set"]["description"] = str(description).strip()
     if tag_list:
         update["$addToSet"] = {"tags": {"$each": tag_list}}
 
@@ -214,6 +267,7 @@ def insert_inventory_item(
         "inventory_id": existing_active["_id"],
         "skipped": False,
         "insufficient": False,
+        "ran_out": False,
         "note": None,
     }
 

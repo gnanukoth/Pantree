@@ -256,6 +256,67 @@ def _matches_diet_or_cuisine(item_doc: dict, pref: dict) -> bool:
     return False
 
 
+VECTOR_INDEX_NAME = "inventory_description_vector"
+VECTOR_SCORE_THRESHOLD = 0.64
+
+
+def _vector_search_item_ids(query_text: str) -> set[Any]:
+    """Return inventory _ids whose description embeddings match ``query_text``."""
+    from db import get_db
+
+    text = str(query_text or "").strip()
+    if not text:
+        return set()
+    pipeline = [
+        {
+            "$vectorSearch": {
+                "index": VECTOR_INDEX_NAME,
+                "path": "description",
+                "query": text,
+                "numCandidates": 40,
+                "limit": 10,
+            }
+        },
+        {
+            "$project": {
+                "_id": 1,
+                "score": {"$meta": "vectorSearchScore"},
+            }
+        },
+    ]
+    ids: set[Any] = set()
+    for doc in get_db()["inventory"].aggregate(pipeline):
+        score = float(doc.get("score") or 0)
+        if score >= VECTOR_SCORE_THRESHOLD and doc.get("_id") is not None:
+            ids.add(doc["_id"])
+    return ids
+
+
+def preference_match(
+    item_doc: dict,
+    pref: dict,
+    *,
+    use_vector_search: bool = False,
+    vector_item_ids: Optional[set[Any]] = None,
+) -> bool:
+    """True when an item matches a diet/cuisine preference.
+
+    If ``use_vector_search`` is true, try Atlas $vectorSearch of the preference
+    content against inventory ``description`` embeddings. Tag matching is the
+    fallback whenever vector search is off, fails, or does not hit this item.
+    """
+    if use_vector_search:
+        try:
+            ids = vector_item_ids
+            if ids is None:
+                ids = _vector_search_item_ids(pref.get("content"))
+            if item_doc.get("_id") in ids:
+                return True
+        except Exception:
+            pass
+    return _matches_diet_or_cuisine(item_doc, pref)
+
+
 def _pref_weight(pref: dict) -> float:
     try:
         return float(pref.get("weight", 1.0))
@@ -297,6 +358,8 @@ def score_item(
     action_log_entries: list[dict],
     *,
     now: Optional[datetime] = None,
+    use_vector_search: bool = False,
+    vector_item_ids: Optional[set[Any]] = None,
 ) -> Optional[dict[str, Any]]:
     """Score one inventory document, or return None if it should be excluded.
 
@@ -338,16 +401,21 @@ def score_item(
         elif raw_days <= EXPIRY_REASON_DAYS:
             reasons.append(f"expires in {raw_days} days")
 
-    preference_match = 0.0
+    preference_score = 0.0
     for pref in prefs:
         if pref.get("type") not in ("diet", "cuisine"):
             continue
         if not _preference_active(pref, today=today):
             continue
-        if not _matches_diet_or_cuisine(item_doc, pref):
+        if not preference_match(
+            item_doc,
+            pref,
+            use_vector_search=use_vector_search,
+            vector_item_ids=vector_item_ids,
+        ):
             continue
         weight = _pref_weight(pref)
-        preference_match += weight
+        preference_score += weight
         label = str(pref.get("content") or "diet").strip()
         reasons.append(f"matches {label} preference")
 
@@ -376,7 +444,7 @@ def score_item(
 
     score = (
         W_EXPIRY * expiry_urgency
-        + W_PREFERENCE * preference_match
+        + W_PREFERENCE * preference_score
         + W_USAGE * usage_frequency
         - W_WASTE * waste_penalty
     )
@@ -389,6 +457,7 @@ def rank_items(
     action_log: list[dict],
     *,
     now: Optional[datetime] = None,
+    use_vector_search: bool = False,
 ) -> list[dict[str, Any]]:
     """Score every active inventory item; return highest score first.
 
@@ -396,9 +465,29 @@ def rank_items(
     Each result is ``{"item": item_doc, "score": float, "reasons": list[str]}``.
     """
     now = now or _utcnow()
+    today = now.date()
+    vector_item_ids: Optional[set[Any]] = None
+    if use_vector_search:
+        try:
+            vector_item_ids = set()
+            for pref in preferences or []:
+                if pref.get("type") not in ("diet", "cuisine"):
+                    continue
+                if not _preference_active(pref, today=today):
+                    continue
+                vector_item_ids |= _vector_search_item_ids(pref.get("content"))
+        except Exception:
+            vector_item_ids = None
     ranked: list[dict[str, Any]] = []
     for item_doc in all_inventory or []:
-        result = score_item(item_doc, preferences, action_log, now=now)
+        result = score_item(
+            item_doc,
+            preferences,
+            action_log,
+            now=now,
+            use_vector_search=use_vector_search,
+            vector_item_ids=vector_item_ids,
+        )
         if result is None:
             continue
         ranked.append(

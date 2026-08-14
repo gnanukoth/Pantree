@@ -119,6 +119,34 @@ def _write_action(
     return result.inserted_id
 
 
+def add_to_grocery_list(
+    db: Database,
+    item: str,
+    reason: str = "ran out — used up",
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    """Log grocery_added for an item, skipping if one exists within 24 hours.
+
+    Returns True when a new grocery_added row was written.
+    """
+    ts = now or _utcnow()
+    key = _item_key(item)
+    if not key:
+        return False
+    if _has_recent_action(db, "grocery_added", key, now=ts):
+        return False
+    _write_action(
+        db,
+        type="grocery_added",
+        item=key,
+        reason=reason,
+        note=None,
+        now=ts,
+    )
+    return True
+
+
 def _expiry_reason(days: int) -> str:
     if days <= 0:
         return "expires today"
@@ -151,14 +179,7 @@ def check_expiring_items(db: Database, days_threshold: int = 2) -> list[str]:
         if _has_recent_action(db, "grocery_added", item, now=now):
             continue
         days = (exp - today).days
-        _write_action(
-            db,
-            type="grocery_added",
-            item=item,
-            reason=_expiry_reason(days),
-            note=None,
-            now=now,
-        )
+        add_to_grocery_list(db, item, reason=_expiry_reason(days), now=now)
         added.append(item)
     return added
 
