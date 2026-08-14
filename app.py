@@ -32,6 +32,17 @@ from scoring import rank_items
 
 app = Flask(__name__, static_folder="static")
 
+CHAT_HISTORY: list[dict[str, str]] = []
+STANDING_PREF_TYPES = ("diet", "dislike", "cuisine", "restriction")
+
+
+def reset_history() -> None:
+    """Clear in-memory session chat so demos start clean."""
+    CHAT_HISTORY.clear()
+
+
+reset_history()
+
 
 def process_message(user_message: str) -> dict[str, Any]:
     """Extract facts from a user message and persist them to MongoDB.
@@ -174,10 +185,88 @@ def _ranked_payload(ranked: list[dict[str, Any]], limit: int = 8) -> list[dict[s
     return payload
 
 
-def generate_response(user_message: str) -> tuple[str, list[str]]:
+def _to_date(value: Any) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return date.fromisoformat(text[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _format_pref_day(value: Any) -> str:
+    day = _to_date(value)
+    if day is None:
+        return ""
+    return day.strftime("%b %d").replace(" 0", " ")
+
+
+def _active_preferences_block() -> str:
+    """Standing prefs plus unexpired temporary constraints, as a prompt block."""
+    today = date.today()
+    lines: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for pref in find_preferences() or []:
+        pref_type = str(pref.get("type") or "").strip().lower()
+        content = str(pref.get("content") or "").strip()
+        if not content:
+            continue
+        if pref_type in STANDING_PREF_TYPES:
+            pass
+        elif pref_type == "temporary_constraint":
+            expires = _to_date(pref.get("expires_at"))
+            if expires is None or expires <= today:
+                continue
+        else:
+            continue
+        key = (pref_type, content.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        if pref_type == "temporary_constraint":
+            until = _format_pref_day(pref.get("expires_at"))
+            until_bit = f" until {until}" if until else ""
+            lines.append(f"- {content}{until_bit} (active constraint)")
+            continue
+        try:
+            weight = float(pref.get("weight", 1.0))
+        except (TypeError, ValueError):
+            weight = 1.0
+        label = pref_type
+        lines.append(f"- {content} {label} (weight {weight:g})")
+    if not lines:
+        return "Known user preferences:\n- (none recorded)"
+    return "Known user preferences:\n" + "\n".join(lines)
+
+
+def _recent_conversation_block() -> str:
+    """Last 6 CHAT_HISTORY entries (up to 3 exchanges) as a prompt block."""
+    recent = CHAT_HISTORY[-6:]
+    if not recent:
+        return "Recent conversation:\n(none yet this session)"
+    lines = []
+    for entry in recent:
+        role = entry.get("role") or "user"
+        message = " ".join(str(entry.get("message") or "").split())
+        if len(message) > 280:
+            message = message[:277] + "..."
+        lines.append(f"{role}: {message}")
+    return "Recent conversation:\n" + "\n".join(lines)
+
+
+def generate_response(user_message: str) -> tuple[str, list[str], list[dict[str, Any]]]:
     """Extract facts, rank inventory, and produce a natural-language reply.
 
-    Returns ``(reply_text, reasons)`` where reasons is the raw scoring list.
+    Returns ``(reply_text, reasons, ranked_payload)``.
     """
     writes: dict[str, Any]
     try:
@@ -210,9 +299,22 @@ def generate_response(user_message: str) -> tuple[str, list[str]]:
         for signal in row.get("reasons") or []:
             reasons.append(f"{name}: {signal}")
 
-    client = _get_client()
-    user_payload = {
-        "user_message": user_message,
+    grocery = [_action_public(d) for d in get_grocery_list(db)[:15]]
+    throwaway = [_action_public(d) for d in get_throwaway_log(db)[:15]]
+    expired_stock = [
+        {
+            "item": doc.get("item"),
+            "quantity": doc.get("quantity"),
+            "unit": doc.get("unit"),
+            "expires_at": _jsonable(doc.get("expires_at")),
+            "status": doc.get("status"),
+        }
+        for doc in find_inventory({"status": "expired"})
+    ]
+
+    prefs_block = _active_preferences_block()
+    history_block = _recent_conversation_block()
+    pantry_snapshot = {
         "extracted_facts": writes.get("facts") or [],
         "top_ranked_items": top,
         "in_stock": [
@@ -225,7 +327,27 @@ def generate_response(user_message: str) -> tuple[str, list[str]]:
             for row in ranked
             if row.get("item")
         ][:12],
+        "grocery_list": [
+            {"item": row.get("item"), "reason": row.get("reason")} for row in grocery
+        ],
+        "throwaway_log": [
+            {
+                "item": row.get("item"),
+                "reason": row.get("reason"),
+                "when": row.get("timestamp") or row.get("created_at"),
+            }
+            for row in throwaway
+        ],
+        "expired_inventory": expired_stock,
     }
+    current_turn = (
+        "Current user message:\n"
+        f"{user_message}\n\n"
+        "Pantry snapshot for this turn (active stock only in in_stock / "
+        "top_ranked_items; expired unused items are in throwaway_log):\n"
+        + json.dumps(pantry_snapshot, default=str)
+    )
+    client = _get_client()
     response = client.messages.create(
         model=MODEL,
         max_tokens=512,
@@ -234,10 +356,9 @@ def generate_response(user_message: str) -> tuple[str, list[str]]:
             {
                 "role": "user",
                 "content": (
-                    "Produce a helpful pantry reply for this turn. "
-                    "Use the ranked items and their reasons; cite those signals "
-                    "in one short sentence.\n\n"
-                    + json.dumps(user_payload, default=str)
+                    f"{prefs_block}\n\n"
+                    f"{history_block}\n\n"
+                    f"{current_turn}"
                 ),
             }
         ],
@@ -248,7 +369,9 @@ def generate_response(user_message: str) -> tuple[str, list[str]]:
         if getattr(block, "type", None) == "text"
     ]
     reply = "\n".join(text_parts).strip() or "I could not generate a reply just now."
-    return reply, reasons
+    CHAT_HISTORY.append({"role": "user", "message": user_message})
+    CHAT_HISTORY.append({"role": "agent", "message": reply})
+    return reply, reasons, top
 
 
 @app.route("/")
@@ -261,9 +384,23 @@ def chat():
     data = request.get_json(silent=True) or {}
     message = str(data.get("message") or "").strip()
     if not message:
-        return jsonify({"reply": "Say something about your pantry or what to cook.", "reasons": []})
-    reply, reasons = generate_response(message)
-    return jsonify({"reply": reply, "reasons": reasons})
+        return jsonify({"reply": "Say something about your pantry or what to cook.", "reasons": [], "ranked": []})
+    reply, reasons, ranked = generate_response(message)
+    return jsonify({"reply": reply, "reasons": reasons, "ranked": ranked})
+
+
+@app.route("/rankings")
+def rankings_view():
+    try:
+        ranked = rank_items(
+            find_inventory(),
+            find_preferences(),
+            find_actions(),
+            use_vector_search=True,
+        )
+    except Exception:
+        ranked = []
+    return jsonify({"ranked": _ranked_payload(ranked, limit=20)})
 
 
 @app.route("/actions")
@@ -275,4 +412,5 @@ def actions_view():
 
 
 if __name__ == "__main__":
+    reset_history()
     app.run(host="0.0.0.0", port=5050, debug=True)

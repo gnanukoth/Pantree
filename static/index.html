@@ -6,168 +6,236 @@
   <title>Pantree</title>
   <style>
     :root {
-      --bg: #f4f1ea;
-      --panel: #fffdf8;
-      --ink: #1f2a24;
+      --bg: #f3efe6;
+      --panel: #fffcf6;
+      --ink: #1c261f;
       --muted: #5d6b64;
-      --line: #d9d2c5;
+      --line: #ddd4c4;
       --leaf: #2f6f4e;
       --leaf-dark: #1f4d36;
-      --user: #e8f0ea;
-      --agent: #fff;
+      --leaf-soft: #e7f2eb;
+      --user: #dfeee4;
+      --agent: #ffffff;
       --reason: #fff6e5;
       --reason-ink: #6a4b16;
+      --score: #2f6f4e;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Segoe UI", system-ui, sans-serif;
-      background: var(--bg);
+      font-family: "Segoe UI", Georgia, system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #e7f2eb 0%, transparent 55%),
+        var(--bg);
       color: var(--ink);
     }
     header {
-      padding: 16px 20px 8px;
+      padding: 18px 24px 10px;
     }
     header h1 {
       margin: 0;
-      font-size: 1.35rem;
+      font-size: 1.45rem;
       letter-spacing: 0.02em;
     }
     header p {
-      margin: 4px 0 0;
+      margin: 6px 0 0;
       color: var(--muted);
-      font-size: 0.9rem;
+      font-size: 0.92rem;
     }
     .layout {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 280px;
+      grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.9fr);
       gap: 16px;
-      padding: 0 20px 20px;
-      min-height: calc(100vh - 88px);
+      padding: 0 24px 24px;
+      min-height: calc(100vh - 92px);
     }
-    .chat, .side {
+    .chat, .viewer {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 14px;
+      box-shadow: 0 8px 24px rgba(31, 42, 36, 0.04);
+      min-height: 0;
     }
     .messages {
-      height: calc(100vh - 210px);
+      height: calc(100vh - 220px);
       overflow-y: auto;
-      padding: 16px;
+      padding: 18px;
     }
     .msg {
-      max-width: 85%;
-      margin-bottom: 12px;
-      padding: 10px 12px;
-      border-radius: 10px;
-      border: 1px solid var(--line);
+      max-width: 88%;
+      margin-bottom: 14px;
     }
-    .msg.user {
-      margin-left: auto;
-      background: var(--user);
-    }
-    .msg.agent {
-      background: var(--agent);
-    }
+    .msg.user { margin-left: auto; }
     .msg .who {
-      font-size: 0.72rem;
+      font-size: 0.7rem;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.05em;
       color: var(--leaf);
-      margin-bottom: 4px;
+      margin-bottom: 6px;
     }
-    .reasons {
-      margin-top: 8px;
-      padding: 8px 10px;
-      background: var(--reason);
-      color: var(--reason-ink);
-      border-radius: 8px;
-      font-size: 0.85rem;
+    .msg.user .who { text-align: right; }
+    .bubble {
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      line-height: 1.5;
     }
-    .reasons strong { display: block; margin-bottom: 4px; }
-    .reasons li { margin: 2px 0; }
+    .msg.user .bubble {
+      background: var(--user);
+      border-bottom-right-radius: 4px;
+    }
+    .msg.agent .bubble {
+      background: var(--agent);
+      border-bottom-left-radius: 4px;
+    }
+    .prose p { margin: 0 0 0.7em; }
+    .prose p:last-child { margin-bottom: 0; }
+    .prose ul, .prose ol { margin: 0.4em 0 0.7em; padding-left: 1.2em; }
+    .prose li { margin: 0.2em 0; }
+    .prose strong { font-weight: 700; }
+    .prose em { font-style: italic; }
     .composer {
       display: flex;
       gap: 8px;
-      padding: 12px;
+      padding: 12px 14px;
       border-top: 1px solid var(--line);
     }
     .composer input {
       flex: 1;
-      padding: 10px 12px;
+      padding: 11px 12px;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 10px;
       font: inherit;
+      background: #fff;
     }
-    .composer button {
+    .composer button, .tab {
       background: var(--leaf);
       color: white;
       border: 0;
-      border-radius: 8px;
-      padding: 10px 16px;
+      border-radius: 10px;
+      padding: 10px 14px;
       font: inherit;
       font-weight: 600;
       cursor: pointer;
     }
-    .composer button:disabled {
-      opacity: 0.6;
-      cursor: wait;
+    .composer button:disabled { opacity: 0.6; cursor: wait; }
+    .composer button:hover:not(:disabled),
+    .tab:hover { background: var(--leaf-dark); }
+    .viewer {
+      display: flex;
+      flex-direction: column;
     }
-    .composer button:hover:not(:disabled) { background: var(--leaf-dark); }
-    .side {
-      padding: 14px;
-      overflow-y: auto;
-      height: calc(100vh - 120px);
-    }
-    .side h2 {
-      margin: 0 0 8px;
-      font-size: 0.95rem;
-    }
-    .side h3 {
-      margin: 14px 0 6px;
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-    .side ul {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-    }
-    .side li {
-      padding: 8px 0;
+    .tabs {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
       border-bottom: 1px solid var(--line);
-      font-size: 0.88rem;
+    }
+    .tab {
+      flex: 1;
+      background: var(--leaf-soft);
+      color: var(--leaf-dark);
+      font-size: 0.82rem;
+      padding: 9px 8px;
+    }
+    .tab.active {
+      background: var(--leaf);
+      color: #fff;
+    }
+    .viewer-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 16px 18px;
+      height: calc(100vh - 220px);
+    }
+    .viewer-body h2 {
+      margin: 0 0 4px;
+      font-size: 1.05rem;
+    }
+    .hint {
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin: 0 0 14px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      background: #fff;
+    }
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: baseline;
+    }
+    .item-name {
+      font-weight: 700;
+      text-transform: capitalize;
+    }
+    .score-num {
+      font-variant-numeric: tabular-nums;
+      color: var(--leaf-dark);
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+    .bar {
+      height: 7px;
+      background: #efe8da;
+      border-radius: 99px;
+      margin: 8px 0 6px;
+      overflow: hidden;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      background: linear-gradient(90deg, #4c8f68, var(--leaf));
+      border-radius: 99px;
     }
     .meta { color: var(--muted); font-size: 0.78rem; }
-    .empty { color: var(--muted); font-size: 0.85rem; }
-    @media (max-width: 800px) {
+    .signals {
+      margin: 6px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    .signals li {
+      font-size: 0.8rem;
+      color: var(--reason-ink);
+      background: var(--reason);
+      display: inline-block;
+      margin: 4px 4px 0 0;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+    .empty { color: var(--muted); font-size: 0.9rem; padding: 8px 0; }
+    @media (max-width: 860px) {
       .layout { grid-template-columns: 1fr; }
-      .messages, .side { height: auto; min-height: 280px; }
+      .messages, .viewer-body { height: auto; min-height: 280px; }
     }
   </style>
 </head>
 <body>
   <header>
     <h1>Pantree</h1>
-    <p>Ask what to cook, log groceries, or set a short-term constraint. Reasoning stays visible under each reply.</p>
+    <p>Your pantry insider — chat on the left, inspect rankings and actions on the right.</p>
   </header>
   <div class="layout">
     <section class="chat">
       <div id="messages" class="messages"></div>
       <form class="composer" id="chat-form">
-        <input id="message" type="text" placeholder="what should I cook?" autocomplete="off" required>
+        <input id="message" type="text" placeholder="what should I cook tonight?" autocomplete="off" required>
         <button type="submit" id="send">Send</button>
       </form>
     </section>
-    <aside class="side">
-      <h2>Live actions</h2>
-      <p class="meta">Polling the database every 3 seconds.</p>
-      <h3>Grocery list</h3>
-      <ul id="grocery"></ul>
-      <h3>Throwaway log</h3>
-      <ul id="throwaway"></ul>
+    <aside class="viewer">
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab active" data-view="rankings">Rankings</button>
+        <button type="button" class="tab" data-view="grocery">Grocery list</button>
+        <button type="button" class="tab" data-view="throwaway">Throwaway</button>
+      </div>
+      <div class="viewer-body" id="viewer-body"></div>
     </aside>
   </div>
   <script>
@@ -175,6 +243,13 @@
     const form = document.getElementById("chat-form");
     const input = document.getElementById("message");
     const send = document.getElementById("send");
+    const viewerBody = document.getElementById("viewer-body");
+    const tabs = document.querySelectorAll(".tab");
+
+    let currentView = "rankings";
+    let ranked = [];
+    let grocery = [];
+    let throwaway = [];
 
     function el(tag, className, text) {
       const node = document.createElement(tag);
@@ -183,27 +258,158 @@
       return node;
     }
 
-    function addMessage(role, text, reasons) {
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function renderMarkdown(text) {
+      var html = escapeHtml(text || "").replace(/\r\n/g, "\n");
+      html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+      var lines = html.split("\n");
+      var out = [];
+      var listType = null;
+      function closeList() {
+        if (listType) {
+          out.push(listType === "ol" ? "</ol>" : "</ul>");
+          listType = null;
+        }
+      }
+      lines.forEach(function (line) {
+        var ul = line.match(/^\s*[-•]\s+(.+)/);
+        var ol = line.match(/^\s*\d+\.\s+(.+)/);
+        if (ul) {
+          if (listType !== "ul") { closeList(); out.push("<ul>"); listType = "ul"; }
+          out.push("<li>" + ul[1] + "</li>");
+          return;
+        }
+        if (ol) {
+          if (listType !== "ol") { closeList(); out.push("<ol>"); listType = "ol"; }
+          out.push("<li>" + ol[1] + "</li>");
+          return;
+        }
+        closeList();
+        if (!line.trim()) return;
+        out.push("<p>" + line + "</p>");
+      });
+      closeList();
+      return out.join("") || "<p></p>";
+    }
+
+    function addMessage(role, text) {
       const wrap = el("div", "msg " + role);
       wrap.appendChild(el("div", "who", role === "user" ? "You" : "Pantree"));
-      wrap.appendChild(el("div", "", text));
+      const bubble = el("div", "bubble");
       if (role === "agent") {
-        const box = el("div", "reasons");
-        box.appendChild(el("strong", "", "Reasoning"));
-        if (reasons && reasons.length) {
-          const list = el("ul");
-          reasons.forEach(function (item) {
-            list.appendChild(el("li", "", item));
-          });
-          box.appendChild(list);
-        } else {
-          box.appendChild(el("div", "", "No scoring signals for this turn."));
-        }
-        wrap.appendChild(box);
+        bubble.classList.add("prose");
+        bubble.innerHTML = renderMarkdown(text);
+      } else {
+        bubble.textContent = text;
       }
+      wrap.appendChild(bubble);
       messagesEl.appendChild(wrap);
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
+
+    function formatWhen(value) {
+      if (!value) return "";
+      try {
+        const d = new Date(value);
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+        }
+      } catch (err) {}
+      return String(value);
+    }
+
+    function scoreWidth(score, maxScore) {
+      var n = Number(score) || 0;
+      var max = Math.max(maxScore || 1, 0.01);
+      var pct = Math.max(4, Math.min(100, (n / max) * 100));
+      if (n < 0) pct = 8;
+      return pct;
+    }
+
+    function renderRankings() {
+      viewerBody.innerHTML = "";
+      viewerBody.appendChild(el("h2", "", "Ranking scores"));
+      viewerBody.appendChild(el("p", "hint", "Live adaptive scores: expiry, preferences, waste, and usage."));
+      if (!ranked.length) {
+        viewerBody.appendChild(el("p", "empty", "No ranked items yet. Send a message to refresh scores."));
+        return;
+      }
+      var maxScore = Math.max.apply(null, ranked.map(function (row) { return Number(row.score) || 0; }).concat([0.01]));
+      ranked.forEach(function (row) {
+        var card = el("div", "card");
+        var top = el("div", "card-top");
+        top.appendChild(el("div", "item-name", row.item || "(unnamed)"));
+        var score = Number(row.score);
+        top.appendChild(el("div", "score-num", isNaN(score) ? "—" : score.toFixed(2)));
+        card.appendChild(top);
+        var bar = el("div", "bar");
+        var fill = el("span");
+        fill.style.width = scoreWidth(score, maxScore) + "%";
+        bar.appendChild(fill);
+        card.appendChild(bar);
+        var bits = [];
+        if (row.quantity != null) bits.push(row.quantity + (row.unit ? " " + row.unit : ""));
+        if (row.expires_at) bits.push("expires " + String(row.expires_at).slice(0, 10));
+        if (bits.length) card.appendChild(el("div", "meta", bits.join(" · ")));
+        if (row.reasons && row.reasons.length) {
+          var ul = el("ul", "signals");
+          row.reasons.forEach(function (reason) { ul.appendChild(el("li", "", reason)); });
+          card.appendChild(ul);
+        }
+        viewerBody.appendChild(card);
+      });
+    }
+
+    function renderActionList(title, hint, rows, emptyText) {
+      viewerBody.innerHTML = "";
+      viewerBody.appendChild(el("h2", "", title));
+      viewerBody.appendChild(el("p", "hint", hint));
+      if (!rows.length) {
+        viewerBody.appendChild(el("p", "empty", emptyText));
+        return;
+      }
+      rows.forEach(function (row) {
+        var card = el("div", "card");
+        card.appendChild(el("div", "item-name", row.item || "(unnamed item)"));
+        if (row.reason) card.appendChild(el("div", "meta", row.reason));
+        var when = formatWhen(row.timestamp || row.created_at);
+        if (when) card.appendChild(el("div", "meta", when));
+        viewerBody.appendChild(card);
+      });
+    }
+
+    function renderViewer() {
+      if (currentView === "grocery") {
+        renderActionList("Grocery list", "Items added because they expired soon or ran out.", grocery, "No grocery additions yet.");
+        return;
+      }
+      if (currentView === "throwaway") {
+        renderActionList("Throwaway log", "Expired items that went unused.", throwaway, "No throwaway entries yet.");
+        return;
+      }
+      renderRankings();
+    }
+
+    function setView(name) {
+      currentView = name;
+      tabs.forEach(function (tab) {
+        tab.classList.toggle("active", tab.getAttribute("data-view") === name);
+      });
+      renderViewer();
+    }
+
+    tabs.forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        setView(tab.getAttribute("data-view"));
+      });
+    });
 
     form.addEventListener("submit", async function (event) {
       event.preventDefault();
@@ -219,45 +425,46 @@
           body: JSON.stringify({ message: text })
         });
         const data = await res.json();
-        addMessage("agent", data.reply || "(empty reply)", data.reasons || []);
+        addMessage("agent", data.reply || "(empty reply)");
+        if (Array.isArray(data.ranked)) ranked = data.ranked;
+        setView("rankings");
+        await refreshActions();
       } catch (err) {
-        addMessage("agent", "Could not reach the chat endpoint.", []);
+        addMessage("agent", "Could not reach the chat endpoint.");
       } finally {
         send.disabled = false;
         input.focus();
       }
     });
 
-    function renderList(targetId, rows, emptyText) {
-      const ul = document.getElementById(targetId);
-      ul.innerHTML = "";
-      if (!rows || !rows.length) {
-        ul.appendChild(el("li", "empty", emptyText));
-        return;
-      }
-      rows.slice(0, 12).forEach(function (row) {
-        const li = el("li");
-        li.appendChild(el("div", "", row.item || "(unnamed item)"));
-        const when = row.timestamp || row.created_at || "";
-        li.appendChild(el("div", "meta", (row.reason || "") + (when ? " · " + when : "")));
-        ul.appendChild(li);
-      });
-    }
-
-    async function pollActions() {
+    async function refreshActions() {
       try {
         const res = await fetch("/actions");
         const data = await res.json();
-        renderList("grocery", data.grocery_list, "No grocery additions yet.");
-        renderList("throwaway", data.throwaway_log, "No throwaway entries yet.");
+        grocery = data.grocery_list || [];
+        throwaway = data.throwaway_log || [];
       } catch (err) {
-        renderList("grocery", [], "Could not load grocery list.");
-        renderList("throwaway", [], "Could not load throwaway log.");
+        grocery = [];
+        throwaway = [];
       }
+      if (currentView !== "rankings") renderViewer();
     }
 
-    pollActions();
-    setInterval(pollActions, 3000);
+    async function refreshRankings() {
+      try {
+        const res = await fetch("/rankings");
+        const data = await res.json();
+        ranked = data.ranked || [];
+      } catch (err) {
+        ranked = [];
+      }
+      if (currentView === "rankings") renderViewer();
+    }
+
+    refreshRankings();
+    refreshActions();
+    setView("rankings");
+    setInterval(refreshActions, 4000);
   </script>
 </body>
 </html>
